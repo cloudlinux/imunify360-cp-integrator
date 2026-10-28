@@ -1,0 +1,9 @@
+{
+  "name": "imunify360-cp-integrator",
+  "description": "Integrate Imunify360 with a hosting control panel it does not support natively: discover the panel on a test server, show the evidence for review, then install, prove and package the integration.",
+  "version": "1.0.0",
+  "author": { "name": "Cloud Linux Inc." },
+  "homepage": "https://github.com/cloudlinux/imunify360-cp-integrator",
+  "repository": "https://github.com/cloudlinux/imunify360-cp-integrator",
+  "license": "MIT"
+}

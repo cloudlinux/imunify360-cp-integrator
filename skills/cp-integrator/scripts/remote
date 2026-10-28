@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# Run one command on the test server and append it, verbatim, to the evidence log.
+#
+#   remote [-n LINES] [RUN_DIR] 'COMMAND'
+#
+# RUN_DIR defaults to the directory this script is in, so a copy placed in the run directory
+# is called as ./remote 'COMMAND'.
+# Connects with RUN_DIR/ssh.conf (Host "target"), runs COMMAND in the server's login shell,
+# appends a "### E<n>" heading (so every Markdown viewer anchors it as #e<n>), the time and
+# exit code, the command and its combined output to RUN_DIR/evidence.md, and prints the
+# same to stdout (only the first LINES lines of output with -n) with the link that cites
+# the entry. stdin is passed to the server. Exits with the remote command's exit code.
+# The last entry number is kept in RUN_DIR/.evidence.seq.
+set -u
+usage() {
+    echo "usage: remote [-n LINES] [RUN_DIR] 'COMMAND'   (RUN_DIR/ssh.conf must define Host target)" >&2
+    exit 2
+}
+lines=0
+if [ "${1:-}" = "-n" ]; then
+    case ${2:-} in '' | *[!0-9]*) usage ;; esac
+    lines=$((10#$2))
+    shift 2
+fi
+if [ $# -eq 1 ]; then set -- "$(cd "$(dirname "$0")" && pwd)" "$1"; fi
+if [ $# -ne 2 ] || [ ! -f "$1/ssh.conf" ]; then usage; fi
+run=$1 cmd=$2 log=$1/evidence.md lock=$1/.evidence.lock seq=$1/.evidence.seq
+out=$(mktemp) || exit 2
+locked=
+trap 'rm -f "$out"; [ -z "$locked" ] || rmdir "$lock" 2>/dev/null' EXIT
+
+ssh -F "$run/ssh.conf" -o BatchMode=yes target "$cmd" >"$out" 2>&1
+rc=$?
+
+# Agents run commands in parallel: number and append one entry at a time. The
+# number comes from a counter, not from the log, whose quoted output can hold
+# anything, and each fence is longer than any run of tildes it encloses. The
+# command has already run, so a lock nobody releases is taken over, and if even
+# that fails the output is still printed.
+for _ in $(seq $((${REMOTE_LOCK_WAIT:-60} * 10))); do
+    mkdir "$lock" 2>/dev/null && locked=1 && break
+    sleep 0.1
+done
+if [ -z "$locked" ]; then
+    echo "remote: taking over $lock, held for ${REMOTE_LOCK_WAIT:-60} s" >&2
+    rmdir "$lock" 2>/dev/null
+    mkdir "$lock" 2>/dev/null && locked=1
+fi
+if [ -z "$locked" ]; then
+    echo "remote: cannot lock $lock; this output is NOT in $log" >&2
+    cat "$out"
+    exit "$rc"
+fi
+if [ -f "$seq" ]; then
+    last=$(cat "$seq")
+else
+    # Count the log's own entry headings, never a line of quoted output: every fence
+    # is longer than any run of tildes inside it, so only its own closer ends it.
+    last=$(awk 'f == 0 && /^~~~~+(sh|text)$/ { f = length($0) - (/sh$/ ? 2 : 4); next }
+        f > 0 && /^~+$/ && length($0) >= f { f = 0; next }
+        f == 0 && /^### E[0-9]+( · .*)?$/ { n++ }
+        END { print n + 0 }' "$log" 2>/dev/null) || last=0
+fi
+n=$((last + 1))
+echo "$n" >"$seq"
+f=$(printf '%s\n' "$cmd" | cat - "$out" | LC_ALL=C grep -aoE '^ {0,3}~+' | tr -d ' ' |
+    awk '{ if (length > m) m = length } END { s = "~~~~"; while (length(s) <= m) s = s "~"; print s }')
+{
+    printf '\n### E%d\n\n<sub>%s · exit %d</sub>\n\n%ssh\n%s\n%s\n\n%stext\n' \
+        "$n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$rc" "$f" "$cmd" "$f" "$f"
+    cat "$out"
+    [ -s "$out" ] && [ "$(tail -c1 "$out" | od -An -c | tr -d ' ')" != '\n' ] && echo
+    printf '%s\n' "$f"
+} >>"$log"
+locked=
+rmdir "$lock"
+
+echo "E$n · exit $rc · cite as [E$n](evidence.md#e$n)"
+if [ "$lines" -gt 0 ]; then
+    head -n "$lines" "$out"
+    total=$(wc -l <"$out")
+    [ "$total" -gt "$lines" ] && echo "[... $((total - lines)) more lines in $log, E$n ...]"
+else
+    cat "$out"
+fi
+exit "$rc"

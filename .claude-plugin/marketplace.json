@@ -1,0 +1,14 @@
+{
+  "name": "imunify360-cp-integrator",
+  "description": "Imunify360 integration for hosting control panels it does not support natively.",
+  "owner": {
+    "name": "Cloud Linux Inc."
+  },
+  "plugins": [
+    {
+      "name": "imunify360-cp-integrator",
+      "source": "./",
+      "description": "Integrate Imunify360 with a hosting control panel it does not support natively."
+    }
+  ]
+}
